@@ -1,6 +1,8 @@
 #include "io_helper.h"
 #include "request.h"
 #include<stdio.h>
+#include<unistd.h>
+#include <string.h>
 #define MAXBUF (8192)
 #define BUFSIZE 16
 
@@ -34,9 +36,8 @@ struct queue_tag{
 };
 
 struct Heap_Tag{
-    struct heap_node arr[BUFSIZE];
+    struct heap_node req_queue[BUFSIZE];
     int count;
-    int capacity;
     int scheduled;
 };
 
@@ -55,35 +56,15 @@ Heap* heap=&h;
 Queue q;        //requests queue for fifo
 Queue*queue=&q;
 
-Heap *CreateHeap(int capacity){
-    Heap *h = (Heap * ) malloc(sizeof(Heap)); //number of heap=1
-
-    //check if memory allocation is fails
-    if(h == NULL){
-        printf("Memory Error!");
-        return h;
-    }
-    h->count=0;
-    h->capacity = capacity;
-    //h->arr = (heapNode *) malloc(capacity*sizeof(heapNode)); //size in bytes
-
-    //check if allocation succeed
-    if ( h->arr == NULL){
-        printf("Memory Error!");
-        return h;
-    }
-    return h;
-}
-
-void heapify_bottom_top(Heap *h,int index){
+void heapify_bottom_top(Heap *hptr,int key){
     heapNode temp;
-    int parent_node = (index-1)/2;
-    if(h->arr[parent_node].size > h->arr[index].size){
+    int parent_node = (key-1)/2;
+    if(hptr->req_queue[parent_node].size > hptr->req_queue[key].size){
         //swap and recursive call
-        temp = h->arr[parent_node];
-        h->arr[parent_node] = h->arr[index];
-        h->arr[index] = temp;
-        heapify_bottom_top(h,parent_node);
+        temp = hptr->req_queue[parent_node];
+        hptr->req_queue[parent_node] = hptr->req_queue[key];
+        hptr->req_queue[key] = temp;
+        heapify_bottom_top(hptr,parent_node);
     }
 }
 
@@ -98,47 +79,95 @@ void heapify_top_bottom(Heap *h, int parent_node){
     if(right >= h->count || right <0)
         right = -1;
 
-    if(left != -1 && h->arr[left].size < h->arr[parent_node].size)
+    if(left != -1 && h->req_queue[left].size < h->req_queue[parent_node].size)
         min=left;
     else
         min=parent_node;
-    if(right != -1 && h->arr[right].size < h->arr[min].size)
+    if(right != -1 && h->req_queue[right].size < h->req_queue[min].size)
         min = right;
 
     if(min != parent_node){
-        temp = h->arr[min];
-        h->arr[min] = h->arr[parent_node];
-        h->arr[parent_node] = temp;
+        temp = h->req_queue[min];
+        h->req_queue[min] = h->req_queue[parent_node];
+        h->req_queue[parent_node] = temp;
 
         // recursive  call
         heapify_top_bottom(h, min);
     }
 }
 
-void insert(Heap *h, heapNode key){
-    if( h->count < h->capacity){
-        h->arr[h->count] = key;
+void insertRequest(Heap *h, heapNode key){
+    if( h->count < buffer_max_size){
+        h->req_queue[h->count] = key;
         heapify_bottom_top(h, h->count);
         h->count++;
         buffer_size++;
     }
 }
 
-heapNode PopMin(Heap *h){
-    heapNode pop;
-    if(h->count==0){
+//returns the request with minimum size in the heap
+heapNode PopMinReq(Heap *hptr){
+    heapNode popped_req;
+    if(hptr->count==0){
         printf("\n__Heap is Empty__\n");
-        return pop;
+        return popped_req;
     }
     // replace first node by last and delete last
-    pop = h->arr[0];
-    h->arr[0] = h->arr[h->count-1];
-    h->count--;
+    popped_req = hptr->req_queue[0];
+    hptr->req_queue[0] = hptr->req_queue[hptr->count-1];
+    hptr->count--;
     buffer_size--;
-    heapify_top_bottom(h, 0);
-    return pop;
+    heapify_top_bottom(hptr, 0);
+    return popped_req;
 }
 
+//returns the frequency of substring in string
+int substring_count(char* string, char* substring) {
+  int i, j, l1, l2;
+  int count = 0;
+  int found = 0;
+ 
+  l1 = strlen(string);
+  l2 = strlen(substring);
+ 
+  for(i = 0; i < l1 - l2; i++) {
+    found = 1;
+    for(j = 0; j < l2; j++) {
+      if(string[i+j] != substring[j]) {
+        found = 0;
+        break;
+      }
+    }
+ 
+    if(found) {
+      count++;
+      i = i + l2 -1;
+    }
+  }
+ 
+  return count;
+}
+
+//checks if the count of '..' is equal to 'root' or not if yes then its a valid access if not then the asked file is prohibited
+int checkFileSecurity(char* filename){
+    char str[MAXBUF];
+    getcwd(str,MAXBUF);                                     //get the path of curr working directory
+    char delim[]="/";                 
+    char *ptr = strtok(str, delim);                         //slice the path with '/' to get the root name            
+    char*root;
+    while (ptr != NULL)                                     //store the last string after '/'(i.e. the root name)in root 
+    {
+      root=ptr;
+      ptr = strtok(NULL, delim);
+    }
+    int count_root=substring_count(filename,root);
+    int count_delim=substring_count(filename,"..");                                  //delim=..
+    if(count_root!=count_delim)
+    {
+      return 1;
+    }
+    return 0;
+}
 //
 // Sends out HTTP response in case of errors
 //
@@ -281,7 +310,7 @@ void* thread_request_serve_static(void* arg)
         pthread_cond_wait(&task_available,&mutex);          //as queue is empty wait for producer to insert a request
       }
       printf("\nEXECUTING CONSUMER sched algo=SFF");
-      heapNode task_picked=PopMin(heap);                    //as task has been inserted,pick the task(request)with minimum req size of all
+      heapNode task_picked=PopMinReq(heap);                    //as task has been inserted,pick the task(request)with minimum req size of all
       heap->scheduled++;
       printf("\npicked task size=%d details:fd=%d,filename=%s,size=%d",task_picked.size,task_picked.req.fd,task_picked.req.filename,task_picked.req.size);
       printf("\nScheduled=%d after incrementing\n",heap->scheduled);
@@ -315,8 +344,8 @@ void print_heap(Heap*h) {
     struct req_info temp;
     printf("\n____________Print Heap_____________\n");
     for(i=0;i< h->count;i++){
-        temp=(h->arr[i]).req;
-        printf("-> Size:%d FD:%d",(h->arr[i]).size,(temp.fd));
+        temp=(h->req_queue[i]).req;
+        printf("-> Size:%d FD:%d",(h->req_queue[i]).size,(temp.fd));
     }
     printf("-> END \n");
 }
@@ -358,6 +387,12 @@ void request_handle(int fd) {
     
 	// check requested content type (static/dynamic)
     is_static = request_parse_uri(uri, filename, cgiargs);
+    
+  //-------------------------check file security-----------------------------------------------
+    if(checkFileSecurity(filename)){
+        request_error(fd, filename, "403", "Forbidden", "This file is Prohibited");
+        return;
+    }
 	// get some data regarding the requested file, also check if requested file is present on server
     if (stat(filename, &sbuf) < 0) {
 		request_error(fd, filename, "404", "Not found", "server could not find this file");
@@ -371,6 +406,8 @@ void request_handle(int fd) {
 			return;
 		}
 
+// TODO: write code to add HTTP requests in the buffer based on the scheduling policy
+
     //storing the information of request in a node
 		  struct req_info *temp=(struct info*)malloc(sizeof(struct req_info));
       temp->fd=fd;
@@ -382,10 +419,7 @@ void request_handle(int fd) {
       strcpy(temp->uri,uri);
       strcpy(temp->version,version);
       temp->size=sbuf.st_size;
-      heap->capacity=buffer_max_size;
       
-		// TODO: write code to add HTTP requests in the buffer based on the scheduling policy
-
       //producer
       pthread_mutex_lock(&mutex);   //locking the critical section
       
@@ -398,7 +432,7 @@ void request_handle(int fd) {
         heapNode task;
         task.size = sbuf.st_size;                   //store the size of request
         task.req = *temp;                           //store the request info
-        insert(heap,task);                          //insert the request into the heap for sff
+        insertRequest(heap,task);                          //insert the request into the heap for sff
         print_heap(heap);
       }  
       else{                               //sched algo= fifo
