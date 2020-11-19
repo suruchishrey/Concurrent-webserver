@@ -388,11 +388,6 @@ void request_handle(int fd) {
 	// check requested content type (static/dynamic)
     is_static = request_parse_uri(uri, filename, cgiargs);
     
-  //-------------------------check file security-----------------------------------------------
-    if(checkFileSecurity(filename)){
-        request_error(fd, filename, "403", "Forbidden", "This file is Prohibited");
-        return;
-    }
 	// get some data regarding the requested file, also check if requested file is present on server
     if (stat(filename, &sbuf) < 0) {
 		request_error(fd, filename, "404", "Not found", "server could not find this file");
@@ -405,7 +400,12 @@ void request_handle(int fd) {
 			request_error(fd, filename, "403", "Forbidden", "server could not read this file");
 			return;
 		}
-
+	//-------------------------check file security-----------------------------------------------
+	    if(checkFileSecurity(filename)){
+		request_error(fd, filename, "403", "Forbidden", "This file is Prohibited");
+		return;
+	    }
+	    
 // TODO: write code to add HTTP requests in the buffer based on the scheduling policy
 
     //storing the information of request in a node
