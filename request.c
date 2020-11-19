@@ -2,7 +2,7 @@
 #include "request.h"
 #include<stdio.h>
 #include<unistd.h>
-#include <string.h>
+#include<string.h>
 #define MAXBUF (8192)
 #define BUFSIZE 16
 
@@ -32,13 +32,11 @@ struct queue_tag{
   int tail;
   struct q_node*front;
   struct q_node*rear;
-  int scheduled; //keeps track of number of tasks scheduled
 };
 
 struct Heap_Tag{
     struct heap_node req_queue[BUFSIZE];
     int count;
-    int scheduled;
 };
 
 pthread_mutex_t mutex= PTHREAD_MUTEX_INITIALIZER;
@@ -301,7 +299,9 @@ void* thread_request_serve_static(void* arg)
 
   //consumer
    while(1){
-    pthread_mutex_lock(&mutex);
+     pthread_mutex_lock(&mutex);
+     int req_fd,req_filesize;
+     char req_filename[MAXBUF];
     
     if(scheduling_algo==1)
     {
@@ -311,12 +311,12 @@ void* thread_request_serve_static(void* arg)
       }
       printf("\nEXECUTING CONSUMER sched algo=SFF");
       heapNode task_picked=PopMinReq(heap);                    //as task has been inserted,pick the task(request)with minimum req size of all
-      heap->scheduled++;
-      printf("\npicked task size=%d details:fd=%d,filename=%s,size=%d",task_picked.size,task_picked.req.fd,task_picked.req.filename,task_picked.req.size);
-      printf("\nScheduled=%d after incrementing\n",heap->scheduled);
-      request_serve_static(task_picked.req.fd,task_picked.req.filename,task_picked.req.size);   //serve the request
-        
-        heap->scheduled--;
+      printf("\npicked task size=%d details:filename=%s\n",task_picked.size,task_picked.req.filename);
+
+      //storing details of the task picked according to schedule to serve the request
+      req_fd=task_picked.req.fd;
+      req_filesize=task_picked.req.size;
+      strcpy(req_filename,task_picked.req.filename);
     }
     else{
       while(queue->head==queue->tail){
@@ -326,15 +326,17 @@ void* thread_request_serve_static(void* arg)
       printf("\nEXECUTING CONSUMER sched algo=FIFO");
       queueNode task_picked=queue->req_queue[queue->head%BUFSIZE];  //pick the task(request) which in the front of queue
       queue->head++;
-      queue->scheduled++;
-      printf("\npicked task size=%d details:fd=%d,filename=%s,size=%d",task_picked.req.size,task_picked.req.fd,task_picked.req.filename,task_picked.req.size);
-      printf("\nScheduled=%d after incrementing\n",heap->scheduled);
-      request_serve_static(task_picked.req.fd,task_picked.req.filename,task_picked.req.size);   //serve the request
-      queue->scheduled--;
+      printf("\npicked task size=%d details:filename=%s\n",task_picked.req.size,task_picked.req.filename);
+      
+      //storing details of the task picked according to schedule to serve the request
+      req_fd=task_picked.req.fd;
+      req_filesize=task_picked.req.size;
+      strcpy(req_filename,task_picked.req.filename);
     }
+    
     pthread_cond_signal(&no_more_tasks);          //if buffer was full signal that one task has been done so its not full
     pthread_mutex_unlock(&mutex);
-        
+    request_serve_static(req_fd,req_filename,req_filesize);   //serve the request
    }
 }
 
@@ -400,12 +402,13 @@ void request_handle(int fd) {
 			request_error(fd, filename, "403", "Forbidden", "server could not read this file");
 			return;
 		}
-	//-------------------------check file security-----------------------------------------------
-	    if(checkFileSecurity(filename)){
-		request_error(fd, filename, "403", "Forbidden", "This file is Prohibited");
-		return;
-	    }
-	    
+
+    //-------------------------check file security-----------------------------------------------
+    if(checkFileSecurity(filename)){
+        request_error(fd, filename, "403", "Forbidden", "This file is Prohibited");
+        return;
+    }
+
 // TODO: write code to add HTTP requests in the buffer based on the scheduling policy
 
     //storing the information of request in a node
