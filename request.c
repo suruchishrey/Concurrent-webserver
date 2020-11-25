@@ -4,7 +4,7 @@
 #include<unistd.h>
 #include<string.h>
 #define MAXBUF (8192)
-#define BUFSIZE 16
+#define BUFSIZE 10000        //(10000, assuming the max size of buffer given by the user would be less than 10000)as queue and heap array required some constant expression for declaration
 
 //
 //	TODO: add code to create and manage the buffer
@@ -30,8 +30,6 @@ struct queue_tag{
   struct q_node req_queue[BUFSIZE];
   int head;
   int tail;
-  struct q_node*front;
-  struct q_node*rear;
 };
 
 struct Heap_Tag{
@@ -40,7 +38,6 @@ struct Heap_Tag{
 };
 
 pthread_mutex_t mutex= PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t writelock= PTHREAD_COND_INITIALIZER;
 pthread_cond_t task_available= PTHREAD_COND_INITIALIZER; 
 pthread_cond_t no_more_tasks= PTHREAD_COND_INITIALIZER; 
 
@@ -51,9 +48,10 @@ typedef struct queue_tag Queue;
 
 Heap h;             //heap for requests for sff
 Heap* heap=&h;
-Queue q;        //requests queue for fifo
+Queue q;        // queue of requests for fifo
 Queue*queue=&q;
 
+//----------------------------------minHeap functions-----------------------------------
 void heapify_bottom_top(Heap *hptr,int key){
     heapNode temp;
     int parent_node = (key-1)/2;
@@ -118,6 +116,7 @@ heapNode PopMinReq(Heap *hptr){
     heapify_top_bottom(hptr, 0);
     return popped_req;
 }
+//--------------------------------------minHeap functions over-----------------------------
 
 //returns the frequency of substring in string
 int substring_count(char* string, char* substring) {
@@ -298,7 +297,7 @@ void* thread_request_serve_static(void* arg)
 	// TODO: write code to actualy respond to HTTP requests
 
   //consumer
-   while(1){
+   while(1){                                      //keep serving requests
      pthread_mutex_lock(&mutex);
      int req_fd,req_filesize;
      char req_filename[MAXBUF];
@@ -307,7 +306,7 @@ void* thread_request_serve_static(void* arg)
     {
       while(buffer_size==0){
         //empty queue
-        pthread_cond_wait(&task_available,&mutex);          //as queue is empty wait for producer to insert a request
+        pthread_cond_wait(&task_available,&mutex);          //as queue is empty wait for producer(server) to insert a request
       }
       printf("\nEXECUTING CONSUMER sched algo=SFF");
       heapNode task_picked=PopMinReq(heap);                    //as task has been inserted,pick the task(request)with minimum req size of all
@@ -326,6 +325,7 @@ void* thread_request_serve_static(void* arg)
       printf("\nEXECUTING CONSUMER sched algo=FIFO");
       queueNode task_picked=queue->req_queue[queue->head%BUFSIZE];  //pick the task(request) which in the front of queue
       queue->head++;
+      buffer_size--;
       printf("\npicked task size=%d details:filename=%s\n",task_picked.req.size,task_picked.req.filename);
       
       //storing details of the task picked according to schedule to serve the request
@@ -336,6 +336,7 @@ void* thread_request_serve_static(void* arg)
     
     pthread_cond_signal(&no_more_tasks);          //if buffer was full signal that one task has been done so its not full
     pthread_mutex_unlock(&mutex);
+    
     request_serve_static(req_fd,req_filename,req_filesize);   //serve the request
    }
 }
@@ -426,7 +427,7 @@ void request_handle(int fd) {
       //producer
       pthread_mutex_lock(&mutex);   //locking the critical section
       
-        while(buffer_size==BUFSIZE){                          //buffer full
+        while(buffer_size==buffer_max_size){                          //buffer full
             pthread_cond_wait(&no_more_tasks,&mutex);         //wait cant take more tasks
         }
       if(scheduling_algo==1)              //sched algo= sff
@@ -443,7 +444,7 @@ void request_handle(int fd) {
         queueNode task;
         task.req=*temp;                             //store the request info
         //insertion of the request into the queue of requests 
-        queue->req_queue[queue->tail%BUFSIZE]=task;
+        queue->req_queue[queue->tail%buffer_max_size]=task;
         queue->tail++;
         buffer_size++;
         print_queue(queue);
@@ -455,4 +456,3 @@ void request_handle(int fd) {
 		request_error(fd, filename, "501", "Not Implemented", "server does not serve dynamic content request");
     }
 }
-
